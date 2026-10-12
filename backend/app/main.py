@@ -10,7 +10,8 @@ from app.routers import (
     appointments_router,
     crm_router,
     simulation_router,
-    webhooks_router
+    webhooks_router,
+    mock_crm_router
 )
 from app.schemas import (
     AppointmentCreate,
@@ -46,6 +47,7 @@ app.include_router(appointments_router)
 app.include_router(crm_router)
 app.include_router(simulation_router)
 app.include_router(webhooks_router)
+app.include_router(mock_crm_router)
 
 # 5. Root & Health Check Endpoint
 @app.get("/health", tags=["Health"])

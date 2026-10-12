@@ -17,9 +17,9 @@ class Settings:
     DATA_DIR: Path = BACKEND_DIR / "data"
     DB_PATH: Path = DATA_DIR / "dental_saas.db"
 
-    # CRM Settings
-    DENTAL_CRM_BASE_URL: str = os.getenv("DENTAL_CRM_BASE_URL", "http://localhost:3000").rstrip("/")
-    DENTAL_CRM_ENABLED: bool = os.getenv("DENTAL_CRM_ENABLED", "true").lower() in ("true", "1", "yes")
+    # CRM Settings (Disconnected by default until a CRM is connected)
+    DENTAL_CRM_BASE_URL: str = os.getenv("DENTAL_CRM_BASE_URL", "").rstrip("/")
+    DENTAL_CRM_ENABLED: bool = os.getenv("DENTAL_CRM_ENABLED", "false").lower() in ("true", "1", "yes")
     DENTAL_CRM_API_KEY: str = os.getenv("DENTAL_CRM_API_KEY", "")
     try:
         DENTAL_CRM_TIMEOUT_SECONDS: float = float(os.getenv("DENTAL_CRM_TIMEOUT_SECONDS", "3.0"))

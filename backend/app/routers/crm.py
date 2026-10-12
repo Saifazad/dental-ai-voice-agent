@@ -55,15 +55,14 @@ def get_crm_status(clinic_id: Optional[str] = Query(None)):
 
 @router.post("/disconnect")
 def disconnect_crm(clinic_id: Optional[str] = Query(None)):
-    """Disconnects CRM and falls back to local SQLite operations."""
-    cid = dental_service.resolve_clinic_id(clinic_id)
+    """Disconnects CRM and clears cached data."""
     crm_client.enabled = False
     crm_client.connected = False
-    dental_service.update_integrations(cid, {
-        "crm_enabled": False
-    })
+    crm_client.base_url = ""
+    crm_client.api_key = ""
+    dental_service.clear_cache()
     return {
         "success": True,
         "connected": False,
-        "message": "CRM disconnected successfully. Switched to local offline cache."
+        "message": "CRM disconnected successfully. All cached clinic data cleared."
     }

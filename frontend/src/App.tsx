@@ -127,14 +127,25 @@ interface ClinicIntegrations {
 export default function DentalSaaSDashboard() {
   const API_BASE = "http://localhost:8000";
 
+  // Dedicated Live CRM Connection & 2-Way Sync State
+  const [crmUrl, setCrmUrl] = useState("http://localhost:8000/api/mock-crm");
+  const [crmApiKey, setCrmApiKey] = useState("");
+  const [showCrmApiKey, setShowCrmApiKey] = useState(false);
+  const [crmConnected, setCrmConnected] = useState(false);
+  const [isConnectingCrm, setIsConnectingCrm] = useState(false);
+  const [isSyncingCrm, setIsSyncingCrm] = useState(false);
+  const [crmSyncStats, setCrmSyncStats] = useState({ appointments: 0, doctors: 0, services: 0 });
+  const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(null);
+  const [crmToastMsg, setCrmToastMsg] = useState<string | null>(null);
+
   // Multi-Tenant State (Dynamically populated from CRM)
   const [clinics, setClinics] = useState<Clinic[]>([]);
   const [selectedClinicId, setSelectedClinicId] = useState<string>("");
   const currentClinic: Clinic = clinics.find((c) => c.id === selectedClinicId) || clinics[0] || {
-    id: "clinic_001",
-    name: "Apex Dental Multi-Specialty & Implant Clinic",
-    city: "South Delhi",
-    address: "M-Block Market, Greater Kailash 2, New Delhi",
+    id: "crm_clinic",
+    name: crmConnected ? "Dental Clinic (Live CRM)" : "No CRM Connected",
+    city: crmConnected ? "Main Branch" : "Offline",
+    address: crmConnected ? "Clinic Address loaded from CRM" : "Connect your Dental CRM to load clinic details",
     phone_number: "+91 11 4982 7700",
     emergency_phone: "+91 11 4982 7700",
     assistant_name: "Aanya",
@@ -168,17 +179,6 @@ export default function DentalSaaSDashboard() {
   const [integrationSuccessMsg, setIntegrationSuccessMsg] = useState<string | null>(null);
   const [isSyncingSheets, setIsSyncingSheets] = useState(false);
   const [isTestingCrm, setIsTestingCrm] = useState(false);
-
-  // Dedicated Live CRM Connection & 2-Way Sync State
-  const [crmUrl, setCrmUrl] = useState("http://localhost:3000");
-  const [crmApiKey, setCrmApiKey] = useState("");
-  const [showCrmApiKey, setShowCrmApiKey] = useState(false);
-  const [crmConnected, setCrmConnected] = useState(false);
-  const [isConnectingCrm, setIsConnectingCrm] = useState(false);
-  const [isSyncingCrm, setIsSyncingCrm] = useState(false);
-  const [crmSyncStats, setCrmSyncStats] = useState({ appointments: 0, doctors: 0, services: 0 });
-  const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(null);
-  const [crmToastMsg, setCrmToastMsg] = useState<string | null>(null);
 
   // Navigation
   const [activeTab, setActiveTab] = useState<
@@ -526,11 +526,57 @@ export default function DentalSaaSDashboard() {
         if (data.appointments) setAppointments(data.appointments);
         if (data.doctors) setDoctors(data.doctors);
         if (data.services) setServices(data.services);
-        setCrmToastMsg(`🎉 CRM Connected! Dynamically loaded ${data.stats?.appointments || 0} appointments, ${data.stats?.doctors || 0} doctors, and ${data.stats?.services || 0} services from PostgreSQL.`);
+        if (data.clinic) {
+          setClinics([data.clinic]);
+          setSelectedClinicId(data.clinic.id);
+        }
+        setCrmToastMsg(`🎉 CRM Connected! Dynamically loaded ${data.stats?.appointments || 0} appointments, ${data.stats?.doctors || 0} doctors, and ${data.stats?.services || 0} services from CRM.`);
         setTimeout(() => setCrmToastMsg(null), 5000);
       } else {
         setCrmToastMsg(`⚠️ Connection Failed: ${data.message || "Cannot connect to CRM server"}`);
         setTimeout(() => setCrmToastMsg(null), 6000);
+      }
+    } catch {
+      setCrmToastMsg(`⚠️ Network Error: Could not reach backend server at ${API_BASE}`);
+      setTimeout(() => setCrmToastMsg(null), 5000);
+    } finally {
+      setIsConnectingCrm(false);
+    }
+  };
+
+  // Quick 1-Click Connect to Built-in Sample Dental CRM (for Instant Testing)
+  const handleQuickConnectMockCrm = async () => {
+    const sampleUrl = "http://localhost:8000/api/mock-crm";
+    setCrmUrl(sampleUrl);
+    setIsConnectingCrm(true);
+    setCrmToastMsg(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/crm/connect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          crm_url: sampleUrl,
+          api_key: "",
+          clinic_id: "",
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.connected) {
+        setCrmConnected(true);
+        if (data.stats) setCrmSyncStats(data.stats);
+        if (data.synced_at) setLastSyncedTime(data.synced_at);
+        if (data.appointments) setAppointments(data.appointments);
+        if (data.doctors) setDoctors(data.doctors);
+        if (data.services) setServices(data.services);
+        if (data.clinic) {
+          setClinics([data.clinic]);
+          setSelectedClinicId(data.clinic.id);
+        }
+        setCrmToastMsg(`🎉 Sample Dental CRM Connected! Loaded ${data.stats?.appointments || 0} appointments, ${data.stats?.doctors || 0} doctors, and ${data.stats?.services || 0} services.`);
+        setTimeout(() => setCrmToastMsg(null), 5000);
+      } else {
+        setCrmToastMsg(`⚠️ Connection Failed: ${data.message || "Could not connect to sample CRM"}`);
+        setTimeout(() => setCrmToastMsg(null), 5000);
       }
     } catch {
       setCrmToastMsg(`⚠️ Network Error: Could not reach backend server at ${API_BASE}`);
@@ -576,12 +622,14 @@ export default function DentalSaaSDashboard() {
         method: "POST",
       });
       setCrmConnected(false);
+      setClinics([]);
+      setSelectedClinicId("");
       setAppointments([]);
       setDoctors([]);
       setServices([]);
       setCallLogs([]);
       setCrmSyncStats({ appointments: 0, doctors: 0, services: 0 });
-      setCrmToastMsg("ℹ️ CRM Disconnected. Connect CRM to dynamically load live records.");
+      setCrmToastMsg("ℹ️ CRM Disconnected. All cached records purged.");
       setTimeout(() => setCrmToastMsg(null), 4000);
     } catch {
       setCrmConnected(false);
@@ -985,6 +1033,81 @@ export default function DentalSaaSDashboard() {
           {/* TAB: OVERVIEW */}
           {activeTab === "overview" && (
             <div className="space-y-6">
+              {/* HEADLESS CRM GATEWAY ONBOARDING BANNER (when disconnected) */}
+              {!crmConnected && (
+                <div className="p-6 md:p-8 rounded-3xl bg-slate-900/90 border border-cyan-500/40 backdrop-blur-xl space-y-6 shadow-2xl shadow-cyan-950/60">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shrink-0">
+                        <Database className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h2 className="text-base md:text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                          <span>Connect Your Clinic CRM</span>
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                            Headless Gateway Mode
+                          </span>
+                        </h2>
+                        <p className="text-xs text-slate-400">
+                          Is dashboard ka apna koi independent database nahi hai. Jaise hi aap CRM connect karenge, live doctors aur appointments sync ho jayenge!
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={handleQuickConnectMockCrm}
+                      disabled={isConnectingCrm}
+                      className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-semibold text-xs shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-2 cursor-pointer self-start md:self-auto shrink-0"
+                    >
+                      <Play className="w-4 h-4" />
+                      <span>⚡ 1-Click Test: Connect Sample CRM</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="md:col-span-2 space-y-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">
+                          CRM Server Base URL:
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={crmUrl}
+                            onChange={(e) => setCrmUrl(e.target.value)}
+                            placeholder="e.g. http://localhost:8000/api/mock-crm or https://crm.yourclinic.com"
+                            className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500"
+                          />
+                          <button
+                            onClick={handleConnectCrm}
+                            disabled={isConnectingCrm || !crmUrl}
+                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-semibold text-xs shadow-md transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                          >
+                            {isConnectingCrm ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
+                            <span>Connect</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="text-[11px] text-slate-400 flex items-center gap-2">
+                        <Key className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span>Optional: CRM API Key / Secret Token (Local testing ke liye blank chhod sakte hain)</span>
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 space-y-1.5">
+                      <div className="font-semibold text-slate-200 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Universal CRM Compatibility:</span>
+                      </div>
+                      <p>
+                        Koi bhi custom CRM (PostgreSQL, MySQL, Node, Python, Laravel) connect ho sakta hai. Bas CRM standard REST endpoints provide karta ho.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Quick Launchpad Banner */}
               <div className="p-6 rounded-2xl border border-cyan-500/20 bg-gradient-to-r from-slate-900/90 via-slate-900 to-cyan-950/20 flex flex-col md:flex-row items-center justify-between gap-6 shadow-xl">
                 <div className="space-y-2">

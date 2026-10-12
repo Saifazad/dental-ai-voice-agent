@@ -63,8 +63,21 @@ class DentalService:
         conn.close()
         return cid
 
+    def clear_cache(self):
+        """Purge all ephemeral cached tables when CRM is disconnected."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM clinics")
+        cursor.execute("DELETE FROM doctors")
+        cursor.execute("DELETE FROM services")
+        cursor.execute("DELETE FROM appointments")
+        cursor.execute("DELETE FROM clinic_integrations")
+        cursor.execute("DELETE FROM call_logs")
+        conn.commit()
+        conn.close()
+
     def resolve_clinic_id(self, clinic_id: Optional[str] = None) -> str:
-        if clinic_id and clinic_id not in ("clinic_bangalore", "default", "null", "undefined"):
+        if clinic_id and clinic_id not in ("clinic_bangalore", "default", "null", "undefined", ""):
             return clinic_id
         clinics = self.get_clinics()
         if clinics:
@@ -72,10 +85,11 @@ class DentalService:
         return "clinic_001"
 
     def get_clinics(self) -> List[Dict[str, Any]]:
-        if crm_client.is_connected() or crm_client.enabled:
-            crm_clinic = crm_client.get_crm_clinic()
-            if crm_clinic:
-                self._upsert_crm_clinic(crm_clinic)
+        if not crm_client.is_connected():
+            return []
+        crm_clinic = crm_client.get_crm_clinic()
+        if crm_clinic:
+            self._upsert_crm_clinic(crm_clinic)
 
         conn = get_connection()
         cursor = conn.cursor()
@@ -85,11 +99,12 @@ class DentalService:
         return [dict(row) for row in rows]
 
     def get_clinic_by_id(self, clinic_id: str) -> Optional[Dict[str, Any]]:
+        if not crm_client.is_connected():
+            return None
         cid = clinic_id
-        if crm_client.is_connected() or crm_client.enabled:
-            crm_clinic = crm_client.get_crm_clinic()
-            if crm_clinic:
-                cid = self._upsert_crm_clinic(crm_clinic)
+        crm_clinic = crm_client.get_crm_clinic()
+        if crm_clinic:
+            cid = self._upsert_crm_clinic(crm_clinic)
 
         conn = get_connection()
         cursor = conn.cursor()
@@ -118,23 +133,24 @@ class DentalService:
         return clinic_dict
 
     def get_services(self, clinic_id: str) -> List[Dict[str, Any]]:
-        """Fetch treatments & prices. Tries live Dental CRM first, falls back to SQLite."""
-        if crm_client.is_connected() or crm_client.enabled:
-            crm_services = crm_client.get_crm_services()
-            if crm_services:
-                normalized = []
-                for s in crm_services:
-                    normalized.append({
-                        "id": s.get("id"),
-                        "clinic_id": clinic_id,
-                        "category": s.get("category", "General"),
-                        "name": s.get("name"),
-                        "price_range": s.get("price_range") or f"₹{s.get('base_price', 500)}",
-                        "min_price": s.get("base_price") or s.get("min_price", 500),
-                        "duration_mins": s.get("duration_mins", 30),
-                        "description": s.get("description", "")
-                    })
-                return normalized
+        """Fetch treatments & prices. Strictly requires live Dental CRM."""
+        if not crm_client.is_connected():
+            return []
+        crm_services = crm_client.get_crm_services()
+        if crm_services:
+            normalized = []
+            for s in crm_services:
+                normalized.append({
+                    "id": s.get("id"),
+                    "clinic_id": clinic_id,
+                    "category": s.get("category", "General"),
+                    "name": s.get("name"),
+                    "price_range": s.get("price_range") or f"₹{s.get('base_price', 500)}",
+                    "min_price": s.get("base_price") or s.get("min_price", 500),
+                    "duration_mins": s.get("duration_mins", 30),
+                    "description": s.get("description", "")
+                })
+            return normalized
 
         conn = get_connection()
         cursor = conn.cursor()
@@ -157,17 +173,18 @@ class DentalService:
         conn.close()
 
         # Update in CRM if connected
-        if crm_client.is_connected() or crm_client.enabled:
+        if crm_client.is_connected():
             crm_client.update_crm_service_price(service_id, price_range, min_price)
 
         return updated
 
     def get_doctors(self, clinic_id: str) -> List[Dict[str, Any]]:
-        """Fetch doctors. Queries live Dental CRM first, falls back to SQLite."""
-        if crm_client.is_connected() or crm_client.enabled:
-            crm_docs = crm_client.get_crm_doctors()
-            if crm_docs:
-                return crm_docs
+        """Fetch doctors. Strictly requires live Dental CRM."""
+        if not crm_client.is_connected():
+            return []
+        crm_docs = crm_client.get_crm_doctors()
+        if crm_docs:
+            return crm_docs
 
         conn = get_connection()
         cursor = conn.cursor()
@@ -330,64 +347,55 @@ class DentalService:
         2. Mirrors rows into local SQLite.
         3. If CRM offline, returns local SQLite cache.
         """
-        if crm_client.is_connected() or crm_client.enabled:
-            crm_apps = crm_client.get_crm_appointments()
-            if crm_apps is not None:
-                # Mirror to SQLite cache
-                conn = get_connection()
-                cursor = conn.cursor()
-                for app in crm_apps:
-                    cursor.execute("""
-                    INSERT INTO appointments (
-                        id, clinic_id, doctor_id, doctor_name, patient_name, patient_phone,
-                        appointment_date, appointment_time, treatment_type, status,
-                        is_emergency, notes, booking_source, created_at, crm_appointment_id, crm_sync_status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        doctor_id=excluded.doctor_id,
-                        doctor_name=excluded.doctor_name,
-                        patient_name=excluded.patient_name,
-                        patient_phone=excluded.patient_phone,
-                        appointment_date=excluded.appointment_date,
-                        appointment_time=excluded.appointment_time,
-                        treatment_type=excluded.treatment_type,
-                        status=excluded.status,
-                        is_emergency=excluded.is_emergency,
-                        notes=excluded.notes,
-                        crm_sync_status='SYNCED'
-                    """, (
-                        app.get("id"),
-                        clinic_id,
-                        app.get("doctor_id"),
-                        app.get("doctor_name"),
-                        app.get("patient_name"),
-                        app.get("patient_phone"),
-                        app.get("appointment_date"),
-                        app.get("appointment_time"),
-                        app.get("treatment_type"),
-                        app.get("status"),
-                        app.get("is_emergency", 0),
-                        app.get("notes", ""),
-                        app.get("booking_source", "Dental CRM (PostgreSQL)"),
-                        app.get("created_at"),
-                        app.get("id"),
-                        "SYNCED"
-                    ))
-                conn.commit()
-                conn.close()
-                return crm_apps
+        if not crm_client.is_connected():
+            return []
+        crm_apps = crm_client.get_crm_appointments()
+        if crm_apps is not None:
+            # Mirror to SQLite cache
+            conn = get_connection()
+            cursor = conn.cursor()
+            for app in crm_apps:
+                cursor.execute("""
+                INSERT INTO appointments (
+                    id, clinic_id, doctor_id, doctor_name, patient_name, patient_phone,
+                    appointment_date, appointment_time, treatment_type, status,
+                    is_emergency, notes, booking_source, created_at, crm_appointment_id, crm_sync_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    doctor_id=excluded.doctor_id,
+                    doctor_name=excluded.doctor_name,
+                    patient_name=excluded.patient_name,
+                    patient_phone=excluded.patient_phone,
+                    appointment_date=excluded.appointment_date,
+                    appointment_time=excluded.appointment_time,
+                    treatment_type=excluded.treatment_type,
+                    status=excluded.status,
+                    is_emergency=excluded.is_emergency,
+                    notes=excluded.notes,
+                    crm_sync_status='SYNCED'
+                """, (
+                    app.get("id"),
+                    clinic_id,
+                    app.get("doctor_id"),
+                    app.get("doctor_name"),
+                    app.get("patient_name"),
+                    app.get("patient_phone"),
+                    app.get("appointment_date"),
+                    app.get("appointment_time"),
+                    app.get("treatment_type"),
+                    app.get("status"),
+                    app.get("is_emergency", 0),
+                    app.get("notes", ""),
+                    app.get("booking_source", "Dental CRM (PostgreSQL)"),
+                    app.get("created_at"),
+                    app.get("id"),
+                    "SYNCED"
+                ))
+            conn.commit()
+            conn.close()
+            return crm_apps
 
-        # Fallback to local SQLite if CRM is offline - only return real CRM-synced records
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-        SELECT * FROM appointments 
-        WHERE clinic_id = ? AND crm_appointment_id IS NOT NULL 
-        ORDER BY created_at DESC
-        """, (clinic_id,))
-        rows = [dict(r) for r in cursor.fetchall()]
-        conn.close()
-        return rows
+        return []
 
     def update_appointment_status(self, app_id: str, new_status: str) -> bool:
         """Updates appointment status in local DB and propagates PATCH to Dental CRM."""
