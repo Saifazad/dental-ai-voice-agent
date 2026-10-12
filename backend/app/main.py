@@ -9,8 +9,7 @@ from app.routers import (
     appointments_router,
     crm_router,
     simulation_router,
-    webhooks_router,
-    mock_crm_router
+    webhooks_router
 )
 from app.schemas import (
     AppointmentCreate,
@@ -43,7 +42,6 @@ app.include_router(appointments_router)
 app.include_router(crm_router)
 app.include_router(simulation_router)
 app.include_router(webhooks_router)
-app.include_router(mock_crm_router)
 
 # 5. Root & Health Check Endpoint
 @app.get("/health", tags=["Health"])
@@ -51,12 +49,12 @@ def health():
     return {
         "status": "healthy",
         "version": settings.VERSION,
-        "mode": "Stateless Headless CRM Gateway",
-        "database": "None (100% Direct CRM Proxy)"
+        "multi_tenant": True,
+        "database": "SQLite (Local Cache)"
     }
 
 # 6. Local Development Server Runner
 if __name__ == "__main__":
     port = settings.PORT
-    print(f"🚀 Starting {settings.PROJECT_NAME} v{settings.VERSION} on port {port}...")
+    print(f"Starting {settings.PROJECT_NAME} v{settings.VERSION} on port {port}...")
     uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=True)
