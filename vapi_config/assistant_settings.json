@@ -1,0 +1,18 @@
+{
+  "name": "Dr. Sharma Dental AI Receptionist",
+  "model": {
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "temperature": 0.4
+  },
+  "voice": {
+    "provider": "cartesia",
+    "voiceId": "a0e99841-438c-4a64-b679-ae501e7d6091",
+    "speed": 1.0
+  },
+  "firstMessage": "Namaste! Smile Dental Care me aapka swagat hai. Main Dr. Sharma ki assistant Aanya bol rahi hu. Main aapki kya madad kar sakti hu?",
+  "silenceTimeoutSeconds": 30,
+  "maxDurationSeconds": 600,
+  "backgroundSound": "off",
+  "bargeIn": true
+}

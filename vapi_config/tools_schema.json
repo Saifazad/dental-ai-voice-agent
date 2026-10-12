@@ -1,0 +1,95 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "check_availability",
+      "description": "Check available dental doctor appointment slots for a specific date or time of day.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "description": "Date requested by the patient, e.g. 'tomorrow', 'Saturday', '2026-10-05'"
+          },
+          "time_preference": {
+            "type": "string",
+            "enum": ["morning", "afternoon", "evening", "any"],
+            "description": "Patient's preferred time of day"
+          }
+        },
+        "required": ["date"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "book_appointment",
+      "description": "Book a confirmed appointment in the dental clinic calendar and Google Sheets.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "patient_name": {
+            "type": "string",
+            "description": "Full name of the patient"
+          },
+          "patient_phone": {
+            "type": "string",
+            "description": "Contact phone number of the patient"
+          },
+          "appointment_date": {
+            "type": "string",
+            "description": "Confirmed appointment date"
+          },
+          "appointment_time": {
+            "type": "string",
+            "description": "Confirmed slot time (e.g. 11:15 AM or 05:00 PM)"
+          },
+          "treatment_type": {
+            "type": "string",
+            "description": "Reason for visit or treatment name (e.g. Scaling, Root Canal, Checkup)"
+          },
+          "notes": {
+            "type": "string",
+            "description": "Any additional symptoms or requests mentioned by the patient"
+          }
+        },
+        "required": ["patient_name", "patient_phone", "appointment_date", "appointment_time"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_service_pricing",
+      "description": "Get estimated price range and details for dental treatments.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "treatment": {
+            "type": "string",
+            "description": "Name of treatment e.g. cleaning, root canal, braces, filling, extraction"
+          }
+        },
+        "required": ["treatment"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "check_emergency",
+      "description": "Evaluate if the patient symptoms count as a dental emergency requiring immediate attention.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "symptoms": {
+            "type": "string",
+            "description": "Patient described pain, bleeding, swelling, or trauma"
+          }
+        },
+        "required": ["symptoms"]
+      }
+    }
+  }
+]
