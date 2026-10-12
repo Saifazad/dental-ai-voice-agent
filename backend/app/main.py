@@ -4,7 +4,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.db import init_db
 from app.routers import (
     clinics_router,
     appointments_router,
@@ -22,13 +21,10 @@ from app.schemas import (
     CrmConnectRequest
 )
 
-# 1. Initialize SQLite Database & Tables on Startup
-init_db()
-
-# 2. FastAPI Application Instance
+# FastAPI Application Instance
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="Modular Multi-Tenant B2B SaaS Backend for Dental Clinic Voice Receptionist",
+    description="Stateless Headless B2B Voice Gateway for Dental Clinic CRMs",
     version=settings.VERSION
 )
 
@@ -55,8 +51,8 @@ def health():
     return {
         "status": "healthy",
         "version": settings.VERSION,
-        "multi_tenant": True,
-        "database": "SQLite (Local Cache)"
+        "mode": "Stateless Headless CRM Gateway",
+        "database": "None (100% Direct CRM Proxy)"
     }
 
 # 6. Local Development Server Runner

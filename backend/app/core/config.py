@@ -14,8 +14,6 @@ class Settings:
 
     # Base directories
     BASE_DIR: Path = BACKEND_DIR
-    DATA_DIR: Path = BACKEND_DIR / "data"
-    DB_PATH: Path = DATA_DIR / "dental_saas.db"
 
     # CRM Settings (Disconnected by default until a CRM is connected)
     DENTAL_CRM_BASE_URL: str = os.getenv("DENTAL_CRM_BASE_URL", "").rstrip("/")
