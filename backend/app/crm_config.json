@@ -1,0 +1,12 @@
+{
+  "crm_url": "https://dental-crm01.vercel.app",
+  "api_key": "dental_crm_api_secret_key_2026",
+  "enabled": true,
+  "custom_routes": {
+    "clinic": "/api/v1/clinic",
+    "appointments": "/api/v1/appointments",
+    "doctors": "/api/v1/doctors",
+    "services": "/api/v1/services",
+    "availability": "/api/v1/availability"
+  }
+}

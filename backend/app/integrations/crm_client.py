@@ -1,8 +1,12 @@
 import time
+import json
 import httpx
+from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Union
 from app.core.config import settings
+
+CONFIG_FILE = Path(__file__).parent.parent / "crm_config.json"
 
 class DentalCrmClient:
     """
@@ -10,6 +14,14 @@ class DentalCrmClient:
     Supports API Key authentication, real-time two-way synchronization,
     and automatic graceful fallback to local SQLite cache if CRM is offline.
     """
+    DEFAULT_ROUTES = {
+        "clinic": "/api/v1/clinic",
+        "appointments": "/api/v1/appointments",
+        "doctors": "/api/v1/doctors",
+        "services": "/api/v1/services",
+        "availability": "/api/v1/availability"
+    }
+
     def __init__(self):
         self.base_url = settings.DENTAL_CRM_BASE_URL
         self.api_key = settings.DENTAL_CRM_API_KEY
@@ -19,16 +31,78 @@ class DentalCrmClient:
         self.connected = False
         self.last_sync_time: Optional[str] = None
         self.last_stats = {"appointments": 0, "doctors": 0, "services": 0}
+        self.schema_mapping: Optional[Dict[str, str]] = None
+        self.custom_routes: Dict[str, str] = dict(self.DEFAULT_ROUTES)
+
+        # Auto-restore connection if previously saved via dashboard
+        if CONFIG_FILE.exists():
+            try:
+                with open(CONFIG_FILE, "r") as f:
+                    saved = json.load(f)
+                    if saved.get("crm_url"):
+                        self.base_url = str(saved["crm_url"]).strip().rstrip("/")
+                        if saved.get("api_key"):
+                            self.api_key = str(saved["api_key"]).strip()
+                        self.enabled = saved.get("enabled", True)
+                        if saved.get("custom_routes"):
+                            self.custom_routes.update(saved["custom_routes"])
+                        health = self.check_health()
+                        self.connected = bool(health.get("online"))
+            except Exception:
+                pass
+        elif self.base_url:
+            try:
+                health = self.check_health()
+                self.connected = bool(health.get("online"))
+            except Exception:
+                pass
+
+    def get_endpoint_url(self, resource: str) -> str:
+        """Returns the full URL for a resource using either custom or default route."""
+        clean_base = (self.base_url or "").strip().rstrip("/")
+        route = self.custom_routes.get(resource) or self.DEFAULT_ROUTES.get(resource, f"/api/v1/{resource}")
+        if not route.startswith("/"):
+            route = "/" + route
+        return f"{clean_base}{route}"
+
+    def _client(self) -> httpx.Client:
+        """Returns an HTTP client configured with timeout and redirect following."""
+        return httpx.Client(timeout=self.timeout, follow_redirects=True)
+
+    def set_custom_routes(self, routes: Dict[str, str]):
+        for k, v in routes.items():
+            if v and str(v).strip():
+                clean_route = str(v).strip()
+                if not clean_route.startswith("/"):
+                    clean_route = "/" + clean_route
+                self.custom_routes[k] = clean_route
+
+    def get_custom_routes(self) -> Dict[str, str]:
+        return self.custom_routes
+
+    def reset_custom_routes(self):
+        self.custom_routes = dict(self.DEFAULT_ROUTES)
+
+
+
 
     def _get_headers(self) -> Dict[str, str]:
+        
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
         if self.api_key and self.api_key.strip():
             clean_key = self.api_key.strip()
-            headers["Authorization"] = f"Bearer {clean_key}"
-            headers["x-api-key"] = clean_key
+            raw_token = clean_key
+            if "dental_crm_token=" in raw_token:
+                parts = raw_token.split("dental_crm_token=")
+                if len(parts) > 1:
+                    raw_token = parts[1].split(";")[0].strip()
+
+            headers["Authorization"] = f"Bearer {raw_token}"
+            headers["x-api-key"] = raw_token
+            headers["Cookie"] = f"dental_crm_token={raw_token}"
         return headers
 
     def configure(self, base_url: str, api_key: Optional[str] = None, enabled: bool = True) -> Dict[str, Any]:
@@ -42,6 +116,20 @@ class DentalCrmClient:
         # Immediate health check / handshake
         health = self.check_health()
         self.connected = bool(health.get("online"))
+
+        # Save to CONFIG_FILE if connection succeeded so server reloads stay connected
+        if self.connected:
+            try:
+                with open(CONFIG_FILE, "w") as f:
+                    json.dump({
+                        "crm_url": self.base_url,
+                        "api_key": self.api_key,
+                        "enabled": self.enabled,
+                        "custom_routes": self.custom_routes
+                    }, f, indent=2)
+            except Exception:
+                pass
+
         return {
             "success": self.connected,
             "connected": self.connected,
@@ -49,6 +137,19 @@ class DentalCrmClient:
             "api_key_configured": bool(self.api_key),
             "diagnostics": health
         }
+
+    def disconnect(self):
+        """Purge active CRM credentials and remove persisted config file."""
+        self.enabled = False
+        self.connected = False
+        self.base_url = ""
+        self.api_key = ""
+        self.set_schema_mapping(None)
+        if CONFIG_FILE.exists():
+            try:
+                CONFIG_FILE.unlink()
+            except Exception:
+                pass
 
     def _normalize_date(self, date_str: str) -> str:
         if not date_str:
@@ -74,10 +175,10 @@ class DentalCrmClient:
             return {"online": False, "reason": "CRM sync disabled via config"}
 
         # Try clinic endpoint first
-        url = f"{self.base_url}/api/v1/clinic"
+        url = self.get_endpoint_url("clinic")
         headers = self._get_headers()
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with self._client() as client:
                 res = client.get(url, headers=headers)
                 if res.status_code == 200:
                     data = res.json()
@@ -87,7 +188,7 @@ class DentalCrmClient:
                         "status_code": 200,
                         "crm_url": self.base_url,
                         "clinic": data.get("clinic", {}),
-                        "message": "Dental Clinic CRM (PostgreSQL) is ONLINE and responding"
+                        "message": "Dental Clinic CRM is ONLINE and responding"
                     }
                 elif res.status_code in (401, 403):
                     return {
@@ -100,9 +201,9 @@ class DentalCrmClient:
             pass
 
         # Fallback ping via availability endpoint
-        avail_url = f"{self.base_url}/api/v1/availability"
+        avail_url = self.get_endpoint_url("availability")
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with self._client() as client:
                 res = client.get(avail_url, params={"date": "today"}, headers=headers)
                 if res.status_code == 200:
                     self.connected = True
@@ -145,10 +246,11 @@ class DentalCrmClient:
         """Fetch clinic profile from Dental Clinic CRM (PostgreSQL)."""
         if not self.enabled:
             return None
-        url = f"{self.base_url}/api/v1/clinic"
+        url = self.get_endpoint_url("clinic")
         headers = self._get_headers()
+
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with self._client() as client:
                 res = client.get(url, headers=headers)
                 if res.status_code == 200:
                     data = res.json()
@@ -162,34 +264,71 @@ class DentalCrmClient:
         if not self.enabled:
             return None
 
-        url = f"{self.base_url}/api/v1/appointments"
+        url = self.get_endpoint_url("appointments")
         headers = self._get_headers()
+
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with self._client() as client:
                 res = client.get(url, headers=headers)
                 if res.status_code == 200:
                     data = res.json()
                     raw_apps = data.get("appointments", [])
                     normalized = []
+                    
+                    # Check if custom AI schema mapping is active
+                    mapping = self.schema_mapping
                     for item in raw_apps:
+                        if mapping:
+                            def _lookup(field_key, default_val=""):
+                                k = mapping.get(field_key, field_key)
+                                if "." in k:
+                                    curr = item
+                                    for part in k.split("."):
+                                        if isinstance(curr, dict) and part in curr:
+                                            curr = curr[part]
+                                        else:
+                                            return default_val
+                                    return curr or default_val
+                                return item.get(k, default_val)
+
+                            p_name = _lookup("patient_name") or item.get("patient_name") or item.get("name") or "Unknown Patient"
+                            p_phone = _lookup("patient_phone") or item.get("patient_phone") or item.get("phone") or ""
+                            p_date = _lookup("appointment_date") or item.get("appointment_date") or "Today"
+                            p_time = _lookup("appointment_time") or item.get("appointment_time") or "10:00 AM"
+                            p_treatment = _lookup("treatment_type") or item.get("treatment_name") or item.get("treatment_type") or "General Consultation"
+                            p_doc = _lookup("doctor_name") or item.get("doctor_name") or "Dr. Alok Aggarwal"
+                            p_notes = _lookup("notes") or item.get("notes") or ""
+                            p_status = _lookup("status") or item.get("status") or "Confirmed"
+                            sync_badge = "SYNCED (AI Mapped)"
+                        else:
+                            p_name = item.get("patient_name", "Unknown Patient")
+                            p_phone = item.get("patient_phone", "")
+                            p_date = item.get("appointment_date", "Today")
+                            p_time = item.get("appointment_time", "10:00 AM")
+                            p_treatment = item.get("treatment_name") or item.get("treatment_type", "General Consultation")
+                            p_doc = item.get("doctor_name", "Dr. Alok Aggarwal")
+                            p_notes = item.get("notes", "")
+                            p_status = item.get("status", "Confirmed")
+                            sync_badge = "SYNCED"
+
                         normalized.append({
                             "id": item.get("id"),
                             "clinic_id": item.get("clinic_id", "clinic_bangalore"),
-                            "patient_name": item.get("patient_name", "Unknown Patient"),
-                            "patient_phone": item.get("patient_phone", ""),
-                            "appointment_date": item.get("appointment_date", "Today"),
-                            "appointment_time": item.get("appointment_time", "10:00 AM"),
-                            "treatment_type": item.get("treatment_name") or item.get("treatment_type", "General Consultation"),
+                            "patient_name": p_name,
+                            "patient_phone": p_phone,
+                            "appointment_date": p_date,
+                            "appointment_time": p_time,
+                            "treatment_type": p_treatment,
                             "doctor_id": item.get("doctor_id"),
-                            "doctor_name": item.get("doctor_name", "Dr. Alok Aggarwal"),
-                            "status": item.get("status", "Confirmed"),
+                            "doctor_name": p_doc,
+                            "status": p_status,
                             "is_emergency": 1 if item.get("is_emergency") in (1, True, "1") else 0,
                             "booking_source": item.get("booked_by") or item.get("booking_source", "Dental CRM (PostgreSQL)"),
-                            "notes": item.get("notes", ""),
+                            "notes": p_notes,
                             "created_at": item.get("created_at") or datetime.now().isoformat(),
                             "crm_appointment_id": item.get("id"),
                             "crm_synced": 1,
-                            "crm_sync_status": "SYNCED"
+                            "crm_sync_status": sync_badge
                         })
                     self.connected = True
                     self.last_sync_time = datetime.now().strftime("%I:%M:%S %p")
@@ -205,11 +344,11 @@ class DentalCrmClient:
         if not self.enabled:
             return {"success": False, "offline": True}
 
-        url = f"{self.base_url}/api/v1/appointments"
+        url = self.get_endpoint_url("appointments")
         headers = self._get_headers()
         payload = {"id": app_id, "status": new_status}
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with self._client() as client:
                 res = client.patch(url, json=payload, headers=headers)
                 if res.status_code == 200:
                     return {"success": True, "crm_updated": True}
@@ -223,10 +362,10 @@ class DentalCrmClient:
         if not self.enabled:
             return None
 
-        url = f"{self.base_url}/api/v1/doctors"
+        url = self.get_endpoint_url("doctors")
         headers = self._get_headers()
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with self._client() as client:
                 res = client.get(url, headers=headers)
                 if res.status_code == 200:
                     data = res.json()
@@ -243,11 +382,11 @@ class DentalCrmClient:
         if not self.enabled:
             return {"success": False, "offline": True}
 
-        url = f"{self.base_url}/api/v1/doctors"
+        url = self.get_endpoint_url("doctors")
         headers = self._get_headers()
         payload = {"id": doctor_id, "is_available": 1 if is_available else 0}
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with self._client() as client:
                 res = client.patch(url, json=payload, headers=headers)
                 if res.status_code == 200:
                     return {"success": True}
@@ -260,10 +399,10 @@ class DentalCrmClient:
         if not self.enabled:
             return None
 
-        url = f"{self.base_url}/api/v1/services"
+        url = self.get_endpoint_url("services")
         headers = self._get_headers()
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with self._client() as client:
                 res = client.get(url, headers=headers)
                 if res.status_code == 200:
                     data = res.json()
@@ -280,11 +419,11 @@ class DentalCrmClient:
         if not self.enabled:
             return {"success": False, "offline": True}
 
-        url = f"{self.base_url}/api/v1/services"
+        url = self.get_endpoint_url("services")
         headers = self._get_headers()
         payload = {"id": service_id, "price_range": price_range, "base_price": min_price}
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with self._client() as client:
                 res = client.put(url, json=payload, headers=headers)
                 if res.status_code == 200:
                     return {"success": True}
@@ -301,15 +440,16 @@ class DentalCrmClient:
         if not self.enabled:
             return None
 
-        url = f"{self.base_url}/api/v1/availability"
+        url = self.get_endpoint_url("availability")
         headers = self._get_headers()
+
         params = {"date": self._normalize_date(date_str), "time_preference": time_preference}
         if doctor_id:
             params["doctor_id"] = doctor_id
 
         for attempt in range(2):
             try:
-                with httpx.Client(timeout=self.timeout) as client:
+                with self._client() as client:
                     res = client.get(url, params=params, headers=headers)
                     if res.status_code == 200:
                         data = res.json()
@@ -345,23 +485,49 @@ class DentalCrmClient:
                 "message": "CRM sync is disabled in config"
             }
 
-        url = f"{self.base_url}/api/v1/appointments"
+        url = self.get_endpoint_url("appointments")
         headers = self._get_headers()
-        payload = {
+
+        standard_dict = {
             "patient_name": patient_name,
             "patient_phone": patient_phone,
             "appointment_date": self._normalize_date(appointment_date),
             "appointment_time": appointment_time,
             "treatment_name": treatment_name,
+            "treatment_type": treatment_name,
             "notes": notes,
             "booked_by": booked_by
         }
         if doctor_id:
-            payload["doctor_id"] = doctor_id
+            standard_dict["doctor_id"] = doctor_id
+
+        # If custom AI schema mapping is active, apply outbound transform!
+        if self.schema_mapping:
+            payload = {}
+            for std_key, val in standard_dict.items():
+                target_key = self.schema_mapping.get(std_key, std_key)
+                if "." in target_key:
+                    parts = target_key.split(".")
+                    cur = payload
+                    for p in parts[:-1]:
+                        if p not in cur:
+                            cur[p] = {}
+                        cur = cur[p]
+                    cur[parts[-1]] = val
+                else:
+                    payload[target_key] = val
+            # Ensure standard fallbacks if CRM requires them
+            if "patient_name" not in payload and "patient_name" in standard_dict:
+                payload["patient_name"] = patient_name
+            if "patient_phone" not in payload and "patient_phone" in standard_dict:
+                payload["patient_phone"] = patient_phone
+        else:
+            payload = standard_dict
+
 
         for attempt in range(2):
             try:
-                with httpx.Client(timeout=self.timeout) as client:
+                with self._client() as client:
                     res = client.post(url, json=payload, headers=headers)
                     if res.status_code == 200:
                         return res.json()
@@ -403,8 +569,21 @@ class DentalCrmClient:
             "api_key_configured": bool(self.api_key),
             "api_key_masked": f"{self.api_key[:4]}••••••••{self.api_key[-3:]}" if len(self.api_key) > 7 else ("••••" if self.api_key else ""),
             "last_synced_at": self.last_sync_time or "Never",
-            "stats": self.last_stats
+            "stats": self.last_stats,
+            "has_ai_schema_mapping": bool(self.schema_mapping),
+            "schema_mapping": self.schema_mapping,
+            "custom_routes": self.custom_routes,
+            "default_routes": self.DEFAULT_ROUTES,
+            "has_custom_routes": bool(self.custom_routes != self.DEFAULT_ROUTES)
         }
+
+    def set_schema_mapping(self, mapping: Optional[Dict[str, str]]):
+        """Set dynamic schema mapping for universal CRM field translation."""
+        self.schema_mapping = mapping
+
+    def get_schema_mapping(self) -> Optional[Dict[str, str]]:
+        return self.schema_mapping
 
 # Singleton instance
 crm_client = DentalCrmClient()
+

@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: dental-ai-voice-backend
+    env: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: DENTAL_CRM_BASE_URL
+        value: https://dental-crm01.vercel.app
+      - key: DENTAL_CRM_API_KEY
+        value: dental_crm_api_secret_key_2026
+      - key: DENTAL_CRM_ENABLED
+        value: "true"
+      - key: DENTAL_CRM_TIMEOUT_SECONDS
+        value: "5.0"

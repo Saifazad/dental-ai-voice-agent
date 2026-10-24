@@ -13,10 +13,12 @@ class DentalService:
     """
     def __init__(self):
         self.call_logs: List[Dict[str, Any]] = []
+        self.cached_clinic: Optional[Dict[str, Any]] = None
 
     def clear_cache(self):
         """Purge ephemeral in-memory state on CRM disconnect."""
         self.call_logs.clear()
+        self.cached_clinic = None
 
     def resolve_clinic_id(self, clinic_id: Optional[str] = None) -> str:
         if clinic_id and clinic_id not in ("clinic_bangalore", "default", "null", "undefined", ""):
@@ -28,26 +30,29 @@ class DentalService:
 
     def get_clinics(self) -> List[Dict[str, Any]]:
         """Fetch clinic profile directly from connected CRM. Returns empty list if disconnected."""
-        if not crm_client.is_connected():
-            return []
-        crm_clinic = crm_client.get_crm_clinic()
+        crm_clinic = crm_client.get_crm_clinic() if crm_client.is_connected() else None
+        if not crm_clinic and self.cached_clinic:
+            crm_clinic = self.cached_clinic
         if crm_clinic:
+            self.cached_clinic = crm_clinic
             return [crm_clinic]
         return []
 
     def get_clinic_by_id(self, clinic_id: str) -> Optional[Dict[str, Any]]:
         """Fetch complete clinic profile directly from connected CRM."""
-        if not crm_client.is_connected():
-            return None
-        crm_clinic = crm_client.get_crm_clinic()
+        crm_clinic = crm_client.get_crm_clinic() if crm_client.is_connected() else None
+        if not crm_clinic:
+            crm_clinic = self.cached_clinic
         if not crm_clinic:
             return None
 
+        self.cached_clinic = crm_clinic
         clinic_dict = dict(crm_clinic)
-        clinic_dict["doctors"] = self.get_doctors(clinic_dict.get("id", clinic_id))
-        clinic_dict["services"] = self.get_services(clinic_dict.get("id", clinic_id))
+        cid = clinic_dict.get("id") or clinic_id
+        clinic_dict["doctors"] = self.get_doctors(cid)
+        clinic_dict["services"] = self.get_services(cid)
 
-        apps = self.get_appointments(clinic_dict.get("id", clinic_id))
+        apps = self.get_appointments(cid)
         clinic_dict["total_booked"] = len(apps)
         clinic_dict["emergency_count"] = sum(1 for a in apps if a.get("is_emergency") in (1, True, "1"))
         return clinic_dict
@@ -227,7 +232,7 @@ class DentalService:
             crm_client.api_key = data["crm_api_key"]
         return self.get_integrations(clinic_id)
 
-    def log_call(self, clinic_id: str, caller_name: str, caller_phone: str, duration: int, summary: str, transcript: str, is_emergency: int = 0, action_taken: str = ""):
+    def log_call(self, clinic_id: str, caller_name: str, caller_phone: str, duration: int, summary: str, transcript: str, is_emergency: int = 0, action_taken: str = "", recording_url: str = ""):
         call_obj = {
             "id": f"call_{uuid.uuid4().hex[:6]}",
             "clinic_id": clinic_id,
@@ -239,7 +244,8 @@ class DentalService:
             "transcript": transcript,
             "sentiment": "Satisfied",
             "is_emergency": is_emergency,
-            "action_taken": action_taken or "Recorded in CRM"
+            "action_taken": action_taken or "Recorded in CRM",
+            "recording_url": recording_url
         }
         self.call_logs.insert(0, call_obj)
 

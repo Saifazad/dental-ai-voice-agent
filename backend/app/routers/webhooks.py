@@ -20,8 +20,11 @@ async def vapi_webhook(request: Request, clinic_id: Optional[str] = Query(None))
 
     print(f"\n📞 [Vapi Webhook] Tenant: {clinic_id} | Message: {message_type}")
 
-    if message_type == "tool-calls":
-        tool_calls = message.get("toolCalls", [])
+    if message_type in ("tool-calls", "function-call"):
+        tool_calls = message.get("toolCalls") or []
+        if not tool_calls and "functionCall" in message:
+            fc = message["functionCall"]
+            tool_calls = [{"id": fc.get("id", "call_1"), "function": fc}]
         results = []
 
         for tc in tool_calls:
@@ -86,8 +89,30 @@ async def vapi_webhook(request: Request, clinic_id: Optional[str] = Query(None))
         return {"results": results}
 
     elif message_type == "end-of-call-report":
-        call_id = message.get("call", {}).get("id")
-        summary = message.get("summary", "Call completed.")
-        return {"status": "success", "message": "Call report logged to SQLite"}
+        call_data = message.get("call", {})
+        customer = call_data.get("customer", {})
+        caller_phone = customer.get("number") or message.get("customer", {}).get("number") or "Incoming Patient"
+        caller_name = customer.get("name") or "Patient"
+        duration = int(call_data.get("durationSeconds") or message.get("durationSeconds") or 45)
+        summary = message.get("summary") or "Patient phone call handled by AI Voice Receptionist."
+        transcript = message.get("transcript") or ""
+        recording_url = message.get("recordingUrl") or call_data.get("recordingUrl") or ""
+
+        # Auto evaluate emergency flag
+        is_emerg = 1 if dental_service.evaluate_emergency(f"{summary} {transcript}")["is_emergency"] else 0
+
+        dental_service.log_call(
+            clinic_id=clinic_id,
+            caller_name=caller_name,
+            caller_phone=caller_phone,
+            duration=duration,
+            summary=summary,
+            transcript=transcript,
+            is_emergency=is_emerg,
+            action_taken="Auto-logged from Vapi Live Phone Call",
+            recording_url=recording_url
+        )
+        print(f"✅ [Vapi Report] Logged call from {caller_phone} ({duration}s) | Emergency: {is_emerg}")
+        return {"status": "success", "message": "Call report logged to dashboard"}
 
     return {"status": "received"}

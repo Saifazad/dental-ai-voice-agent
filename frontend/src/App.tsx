@@ -34,8 +34,15 @@ import {
   EyeOff,
   CheckCircle2,
   Link2,
-  Unlink
+  Unlink,
+  Sparkles,
+  Wand2,
+  SlidersHorizontal,
+  ChevronDown,
+  ChevronUp,
+  Code2
 } from "lucide-react";
+
 
 // Types
 interface Clinic {
@@ -125,10 +132,12 @@ interface ClinicIntegrations {
 }
 
 export default function DentalSaaSDashboard() {
-  const API_BASE = "http://localhost:8000";
+  const API_BASE = (import.meta as any).env?.VITE_API_BASE || "http://localhost:8000";
 
   // Dedicated Live CRM Connection & 2-Way Sync State
   const [crmUrl, setCrmUrl] = useState("");
+
+
   const [crmApiKey, setCrmApiKey] = useState("");
   const [showCrmApiKey, setShowCrmApiKey] = useState(false);
   const [crmConnected, setCrmConnected] = useState(false);
@@ -137,6 +146,45 @@ export default function DentalSaaSDashboard() {
   const [crmSyncStats, setCrmSyncStats] = useState({ appointments: 0, doctors: 0, services: 0 });
   const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(null);
   const [crmToastMsg, setCrmToastMsg] = useState<string | null>(null);
+
+  // Developer Mode: Custom CRM Endpoints
+  const [showCustomRoutes, setShowCustomRoutes] = useState(false);
+  const [customRoutes, setCustomRoutes] = useState<{ [key: string]: string }>({
+    clinic: "/api/v1/clinic",
+    appointments: "/api/v1/appointments",
+    doctors: "/api/v1/doctors",
+    services: "/api/v1/services",
+    availability: "/api/v1/availability"
+  });
+  const [hasCustomRoutes, setHasCustomRoutes] = useState(false);
+  const [isSavingRoutes, setIsSavingRoutes] = useState(false);
+
+
+
+  // Tareeka 2: AI Auto-Schema Matching State
+  const [aiSamplePreset, setAiSamplePreset] = useState<"practo" | "hubspot" | "dentrix" | "custom">("practo");
+  const [aiSampleJson, setAiSampleJson] = useState(`{
+  "pat_fullname": "Aarav Sharma",
+  "contact_mobile": "+91 98765 43210",
+  "visit_day": "2026-10-25",
+  "slot_timing": "11:15 AM",
+  "procedure": "Root Canal Treatment",
+  "dentist_name": "Dr. Sharma",
+  "remarks": "Severe molar ache"
+}`);
+  const [isAnalyzingSchema, setIsAnalyzingSchema] = useState(false);
+  const [isSavingSchemaMapping, setIsSavingSchemaMapping] = useState(false);
+  const [aiSchemaResult, setAiSchemaResult] = useState<{
+    success: boolean;
+    engine: string;
+    total_detected_fields: number;
+    mapped_count: number;
+    mapping: Record<string, { crm_field: string; label: string; confidence: number; sample_value: string }>;
+    unmapped_crm_fields: string[];
+  } | null>(null);
+  const [activeSchemaMapping, setActiveSchemaMapping] = useState<{ [key: string]: string }>({});
+  const [hasCustomSchemaMapping, setHasCustomSchemaMapping] = useState(false);
+
 
   // Multi-Tenant State (Dynamically populated from CRM)
   const [clinics, setClinics] = useState<Clinic[]>([]);
@@ -266,7 +314,19 @@ export default function DentalSaaSDashboard() {
         if (crmData.crm_url && !crmUrl) setCrmUrl(crmData.crm_url);
         if (crmData.stats) setCrmSyncStats(crmData.stats);
         if (crmData.last_synced_at) setLastSyncedTime(crmData.last_synced_at);
+        if (crmData.has_ai_schema_mapping) {
+          setHasCustomSchemaMapping(true);
+          if (crmData.schema_mapping) setActiveSchemaMapping(crmData.schema_mapping);
+        }
+        if (crmData.custom_routes) {
+          setCustomRoutes(crmData.custom_routes);
+        }
+        if (crmData.has_custom_routes !== undefined) {
+          setHasCustomRoutes(Boolean(crmData.has_custom_routes));
+        }
       }
+
+
     } catch {
       // Backend offline
     }
@@ -595,6 +655,164 @@ export default function DentalSaaSDashboard() {
       setCrmConnected(false);
     }
   };
+
+  // 3b. Save & Activate Custom CRM Routes
+  const handleSaveCustomRoutes = async () => {
+    setIsSavingRoutes(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/crm/custom-routes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routes: customRoutes }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCustomRoutes(data.custom_routes);
+        setHasCustomRoutes(Boolean(data.has_custom_routes));
+        setCrmToastMsg("✅ Custom API Routes activated! Dynamic CRM requests will use these endpoints.");
+        setTimeout(() => setCrmToastMsg(null), 4500);
+        if (crmConnected) {
+          handleSyncCrm();
+        }
+      } else {
+        setCrmToastMsg(`⚠️ Failed to save routes: ${data.message || "Unknown error"}`);
+        setTimeout(() => setCrmToastMsg(null), 4500);
+      }
+    } catch {
+      setCrmToastMsg("⚠️ Error saving routes. Check backend server.");
+      setTimeout(() => setCrmToastMsg(null), 4000);
+    } finally {
+      setIsSavingRoutes(false);
+    }
+  };
+
+  // 3c. Reset Custom Routes to Default /api/v1/...
+  const handleResetCustomRoutes = async () => {
+    setIsSavingRoutes(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/crm/custom-routes/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCustomRoutes(data.custom_routes);
+        setHasCustomRoutes(false);
+        setCrmToastMsg("🔄 API routes reset to standard /api/v1 defaults.");
+        setTimeout(() => setCrmToastMsg(null), 4000);
+        if (crmConnected) {
+          handleSyncCrm();
+        }
+      }
+    } catch {
+      setCrmToastMsg("⚠️ Error resetting routes.");
+      setTimeout(() => setCrmToastMsg(null), 4000);
+    } finally {
+      setIsSavingRoutes(false);
+    }
+  };
+
+  // 4. Preset selector for Tareeka 2 AI Schema Matcher
+  const handleSelectPreset = (preset: "practo" | "hubspot" | "dentrix" | "custom") => {
+    setAiSamplePreset(preset);
+    if (preset === "practo") {
+      setAiSampleJson(`{
+  "pat_fullname": "Aarav Sharma",
+  "contact_mobile": "+91 98765 43210",
+  "visit_day": "2026-10-25",
+  "slot_timing": "11:15 AM",
+  "procedure": "Root Canal Treatment",
+  "dentist_name": "Dr. Sharma",
+  "remarks": "Severe molar ache"
+}`);
+    } else if (preset === "hubspot") {
+      setAiSampleJson(`{
+  "customer_first_name": "Priya Verma",
+  "phone_number": "9812345678",
+  "scheduled_date": "2026-10-26",
+  "slot_time": "05:00 PM",
+  "service_type": "Teeth Whitening",
+  "physician": "Dr. Aggarwal",
+  "notes": "Patient requested evening slot"
+}`);
+    } else if (preset === "dentrix") {
+      setAiSampleJson(`{
+  "PatName": "Rohan Gupta",
+  "WirelessPhone": "9876500000",
+  "AptDate": "2026-10-27",
+  "AptTime": "10:30 AM",
+  "ProcDescript": "Dental Crown",
+  "Dentist": "Dr. Sharma",
+  "Reason": "Routine checkup"
+}`);
+    }
+  };
+
+  // 5. AI Auto-Schema Analyzer
+  const handleAnalyzeSchema = async () => {
+    setIsAnalyzingSchema(true);
+    setCrmToastMsg(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/crm/ai-auto-map`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sample_json: aiSampleJson,
+          crm_url: crmUrl,
+          clinic_id: selectedClinicId,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAiSchemaResult(data);
+        const newMap: { [key: string]: string } = {};
+        Object.keys(data.mapping).forEach((k) => {
+          newMap[k] = data.mapping[k].crm_field;
+        });
+        setActiveSchemaMapping(newMap);
+        setCrmToastMsg(`✨ AI Analyzed Schema! Auto-matched ${data.mapped_count} fields with high confidence.`);
+        setTimeout(() => setCrmToastMsg(null), 5000);
+      } else {
+        setCrmToastMsg(`⚠️ Schema Analysis Failed: ${data.detail || data.error || "Check your JSON format"}`);
+        setTimeout(() => setCrmToastMsg(null), 5000);
+      }
+    } catch {
+      setCrmToastMsg("⚠️ Error connecting to AI Schema engine.");
+      setTimeout(() => setCrmToastMsg(null), 4000);
+    } finally {
+      setIsAnalyzingSchema(false);
+    }
+  };
+
+  // 6. Save & Activate AI Schema Mapping
+  const handleSaveSchemaMapping = async () => {
+    setIsSavingSchemaMapping(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/crm/save-mapping`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clinic_id: selectedClinicId,
+          mapping: activeSchemaMapping,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setHasCustomSchemaMapping(true);
+        setCrmToastMsg(`🎉 AI Schema Mapping Activated! All voice calls & syncs now use this schema.`);
+        setTimeout(() => setCrmToastMsg(null), 5000);
+      } else {
+        setCrmToastMsg(`⚠️ Failed to save mapping: ${data.message || "Unknown error"}`);
+        setTimeout(() => setCrmToastMsg(null), 4000);
+      }
+    } catch {
+      setCrmToastMsg("⚠️ Failed to save mapping to backend.");
+      setTimeout(() => setCrmToastMsg(null), 4000);
+    } finally {
+      setIsSavingSchemaMapping(false);
+    }
+  };
+
 
   // Filter Appointments
   const filteredAppointments = appointments.filter((app) => {
@@ -1770,7 +1988,20 @@ export default function DentalSaaSDashboard() {
                               2-WAY LIVE
                             </span>
                           )}
+                          {hasCustomSchemaMapping && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1">
+                              <Sparkles className="w-2.5 h-2.5 text-purple-400" />
+                              <span>AI SCHEMA ACTIVE</span>
+                            </span>
+                          )}
+                          {hasCustomRoutes && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                              <Code2 className="w-2.5 h-2.5 text-amber-400" />
+                              <span>CUSTOM ENDPOINTS</span>
+                            </span>
+                          )}
                         </h3>
+
                         <p className="text-[11px] text-slate-400">PostgreSQL CRM (:3000), Practo, Custom Cloud PMS</p>
                       </div>
                     </div>
@@ -1825,6 +2056,161 @@ export default function DentalSaaSDashboard() {
                           {showCrmApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </button>
                       </div>
+                    </div>
+
+                    {/* ⚙️ DEVELOPER MODE: CUSTOM API ENDPOINTS ACCORDION */}
+                    <div className="pt-2 border-t border-slate-800/80">
+                      <button
+                        type="button"
+                        onClick={() => setShowCustomRoutes(!showCustomRoutes)}
+                        className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 hover:bg-slate-950 border border-slate-800 hover:border-slate-700 transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 group-hover:bg-cyan-500/20">
+                            <Code2 className="w-3.5 h-3.5" />
+                          </div>
+                          <span className="font-semibold text-slate-200 text-xs">
+                            ⚙️ Developer Mode: Custom API Route Endpoints
+                          </span>
+                          {hasCustomRoutes && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              CUSTOM ACTIVE
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 text-slate-400 text-[11px]">
+                          <span>{showCustomRoutes ? "Hide" : "Customize"}</span>
+                          {showCustomRoutes ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                        </div>
+                      </button>
+
+                      {showCustomRoutes && (
+                        <div className="mt-2.5 p-3.5 rounded-xl bg-slate-950/90 border border-cyan-500/20 space-y-3">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <p className="text-[11px] text-slate-300 font-medium">
+                                Configure Custom CRM Endpoints
+                              </p>
+                              <p className="text-[10px] text-slate-400">
+                                Agar aapke CRM me routes different hain (e.g. <code className="text-cyan-400">/api/doctor</code> ya <code className="text-cyan-400">/portal/appointments</code>), yahan fill karein. Code me kuch bhi change karne ki zarurat nahi!
+                              </p>
+                            </div>
+                            {hasCustomRoutes && (
+                              <button
+                                type="button"
+                                onClick={handleResetCustomRoutes}
+                                className="text-[10px] text-slate-400 hover:text-slate-200 underline cursor-pointer"
+                              >
+                                Reset Defaults
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs font-mono">
+                            <div>
+                              <label className="block text-[10px] text-slate-400 mb-1 font-sans">
+                                1. Clinic Info Route:
+                              </label>
+                              <input
+                                type="text"
+                                value={customRoutes.clinic || ""}
+                                onChange={(e) => setCustomRoutes({ ...customRoutes, clinic: e.target.value })}
+                                placeholder="/api/v1/clinic"
+                                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-cyan-300 text-xs focus:outline-none focus:border-cyan-500 font-mono"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] text-slate-400 mb-1 font-sans">
+                                2. Appointments Route:
+                              </label>
+                              <input
+                                type="text"
+                                value={customRoutes.appointments || ""}
+                                onChange={(e) => setCustomRoutes({ ...customRoutes, appointments: e.target.value })}
+                                placeholder="/api/v1/appointments"
+                                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-cyan-300 text-xs focus:outline-none focus:border-cyan-500 font-mono"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] text-slate-400 mb-1 font-sans">
+                                3. Doctors / Staff Route:
+                              </label>
+                              <input
+                                type="text"
+                                value={customRoutes.doctors || ""}
+                                onChange={(e) => setCustomRoutes({ ...customRoutes, doctors: e.target.value })}
+                                placeholder="/api/v1/doctors"
+                                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-cyan-300 text-xs focus:outline-none focus:border-cyan-500 font-mono"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] text-slate-400 mb-1 font-sans">
+                                4. Treatments &amp; Services Route:
+                              </label>
+                              <input
+                                type="text"
+                                value={customRoutes.services || ""}
+                                onChange={(e) => setCustomRoutes({ ...customRoutes, services: e.target.value })}
+                                placeholder="/api/v1/services"
+                                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-cyan-300 text-xs focus:outline-none focus:border-cyan-500 font-mono"
+                              />
+                            </div>
+
+                            <div className="sm:col-span-2">
+                              <label className="block text-[10px] text-slate-400 mb-1 font-sans">
+                                5. Doctor Availability Route:
+                              </label>
+                              <input
+                                type="text"
+                                value={customRoutes.availability || ""}
+                                onChange={(e) => setCustomRoutes({ ...customRoutes, availability: e.target.value })}
+                                placeholder="/api/v1/availability"
+                                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-cyan-300 text-xs focus:outline-none focus:border-cyan-500 font-mono"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Full URL Live Preview */}
+                          <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-[10px] text-slate-400 flex flex-col gap-1 font-mono">
+                            <span className="text-slate-500 font-sans font-semibold">Live Request Preview:</span>
+                            <span className="text-cyan-400 truncate">
+                              GET {(crmUrl || "https://your-crm.com").replace(/\/$/, "")}{customRoutes.doctors?.startsWith("/") ? customRoutes.doctors : `/${customRoutes.doctors || "api/v1/doctors"}`}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-1">
+                            <button
+                              type="button"
+                              onClick={handleResetCustomRoutes}
+                              disabled={isSavingRoutes}
+                              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-medium transition-all cursor-pointer"
+                            >
+                              Reset Standard Defaults
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleSaveCustomRoutes}
+                              disabled={isSavingRoutes}
+                              className="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-semibold transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
+                            >
+                              {isSavingRoutes ? (
+                                <>
+                                  <RefreshCw className="w-3 h-3 animate-spin" />
+                                  <span>Saving...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-cyan-200" />
+                                  <span>Save &amp; Activate Routes</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1966,8 +2352,239 @@ export default function DentalSaaSDashboard() {
                   </div>
                 </div>
               </div>
+
+              {/* 5. TAREEKA 2: UNIVERSAL AI SCHEMA MATCHER (CONNECT ANY CRM / PMS) */}
+              <div className="p-6 rounded-2xl bg-gradient-to-b from-slate-900/95 via-slate-900/90 to-slate-950/95 border border-purple-500/30 shadow-xl shadow-purple-500/5 space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-purple-500/20 to-cyan-500/20 border border-purple-500/40 flex items-center justify-center text-purple-400 shadow-inner">
+                      <Sparkles className="w-6 h-6 animate-pulse" />
+                    </div>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-base font-bold text-white">Tareeka 2: AI Universal CRM Schema Matcher</h3>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                          🤖 Zero-Touch Semantic AI
+                        </span>
+                        {hasCustomSchemaMapping && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                            <span>Mapping Active</span>
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-400">
+                        Connect <strong>Practo, HubSpot, Dentrix, Salesforce</strong> ya apna koi bhi custom CRM! AI sample JSON dekh kar field names auto-match karega taaki Voice Agent bina kisi coding ke data sync kar sake.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Quick Sample Presets */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>1. Choose a Quick Sample Preset or Paste Your Own CRM JSON:</span>
+                    </label>
+                    <span className="text-[11px] text-slate-400">Click any preset to test instantly</span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleSelectPreset("practo")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        aiSamplePreset === "practo"
+                          ? "bg-purple-600 text-white shadow-md shadow-purple-600/30 border border-purple-400"
+                          : "bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700"
+                      }`}
+                    >
+                      <span>🏥 Practo Dental PMS</span>
+                      <span className="text-[10px] opacity-75">(pat_fullname, contact_mobile...)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleSelectPreset("hubspot")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        aiSamplePreset === "hubspot"
+                          ? "bg-purple-600 text-white shadow-md shadow-purple-600/30 border border-purple-400"
+                          : "bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700"
+                      }`}
+                    >
+                      <span>🟧 HubSpot / GoHighLevel</span>
+                      <span className="text-[10px] opacity-75">(customer_first_name, scheduled_date...)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleSelectPreset("dentrix")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        aiSamplePreset === "dentrix"
+                          ? "bg-purple-600 text-white shadow-md shadow-purple-600/30 border border-purple-400"
+                          : "bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700"
+                      }`}
+                    >
+                      <span>🦷 Open Dental / Dentrix</span>
+                      <span className="text-[10px] opacity-75">(PatName, WirelessPhone...)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setAiSamplePreset("custom")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        aiSamplePreset === "custom"
+                          ? "bg-cyan-600 text-white shadow-md shadow-cyan-600/30 border border-cyan-400"
+                          : "bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700"
+                      }`}
+                    >
+                      <span>✍️ Custom JSON</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* JSON Editor Box */}
+                <div className="space-y-2">
+                  <div className="relative">
+                    <textarea
+                      rows={7}
+                      value={aiSampleJson}
+                      onChange={(e) => {
+                        setAiSampleJson(e.target.value);
+                        setAiSamplePreset("custom");
+                      }}
+                      placeholder="Paste a single sample appointment or clinic record from your CRM in JSON format..."
+                      className="w-full bg-slate-950/90 border border-slate-800 rounded-xl p-3 text-cyan-300 font-mono text-xs focus:outline-none focus:border-purple-500 leading-relaxed shadow-inner"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                    <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                      <Bot className="w-3.5 h-3.5 text-purple-400" />
+                      <span>Semantic engine matches custom keys, phone formats, timestamps, and doctor prefixes automatically.</span>
+                    </div>
+
+                    <button
+                      disabled={isAnalyzingSchema}
+                      onClick={() => handleAnalyzeSchema()}
+                      className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 hover:from-purple-500 hover:to-cyan-400 text-white font-bold text-xs shadow-lg shadow-purple-600/25 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-60"
+                    >
+                      {isAnalyzingSchema ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin text-purple-200" />
+                          <span>AI Analyzing Fields &amp; Semantics...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Wand2 className="w-4 h-4 text-purple-200" />
+                          <span>⚡ AI Auto-Detect &amp; Match Schema</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Results Mapping Table */}
+                {aiSchemaResult && aiSchemaResult.success && (
+                  <div className="p-4 rounded-xl bg-slate-950 border border-purple-500/40 space-y-4 animate-in fade-in duration-300">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                      <div>
+                        <div className="text-xs font-bold text-white flex items-center gap-2">
+                          <span>✨ AI Schema Detection Results:</span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            {aiSchemaResult.mapped_count} / {Object.keys(aiSchemaResult.mapping).length} Fields Matched
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          Review the detected field connections below. You can edit any target CRM field before activating.
+                        </p>
+                      </div>
+
+                      <button
+                        disabled={isSavingSchemaMapping}
+                        onClick={handleSaveSchemaMapping}
+                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-xs shadow-md shadow-emerald-500/20 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-60"
+                      >
+                        {isSavingSchemaMapping ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>Activating...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>✅ Approve &amp; Activate Schema Mapping</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-800 text-[11px] text-slate-400 uppercase font-mono">
+                            <th className="py-2 px-3">Voice Agent Standard Field</th>
+                            <th className="py-2 px-3">Auto-Detected CRM Field</th>
+                            <th className="py-2 px-3">AI Confidence</th>
+                            <th className="py-2 px-3">Sample Value</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-900 font-mono">
+                          {Object.keys(aiSchemaResult.mapping).map((stdKey) => {
+                            const meta = aiSchemaResult.mapping[stdKey];
+                            const currentVal = activeSchemaMapping[stdKey] || meta.crm_field;
+                            const isHigh = meta.confidence >= 90;
+                            const isMed = meta.confidence >= 75 && meta.confidence < 90;
+
+                            return (
+                              <tr key={stdKey} className="hover:bg-slate-900/60 transition-colors">
+                                <td className="py-2.5 px-3">
+                                  <div className="font-semibold text-slate-200">{meta.label}</div>
+                                  <div className="text-[10px] text-slate-500 font-sans">{stdKey}</div>
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <input
+                                    type="text"
+                                    value={currentVal}
+                                    onChange={(e) =>
+                                      setActiveSchemaMapping({
+                                        ...activeSchemaMapping,
+                                        [stdKey]: e.target.value,
+                                      })
+                                    }
+                                    className="bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1 text-cyan-300 font-mono text-xs w-48 focus:outline-none focus:border-purple-500"
+                                  />
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <span
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                      isHigh
+                                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                                        : isMed
+                                        ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/30"
+                                        : "bg-amber-500/10 text-amber-400 border-amber-500/30"
+                                    }`}
+                                  >
+                                    <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+                                    <span>{meta.confidence}% Match</span>
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-400 text-[11px] truncate max-w-xs">
+                                  &quot;{meta.sample_value}&quot;
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
+
 
           {/* TAB: SETTINGS */}
           {activeTab === "settings" && (
