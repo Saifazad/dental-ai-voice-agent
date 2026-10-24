@@ -9,9 +9,9 @@ services:
       - key: PORT
         value: 10000
       - key: DENTAL_CRM_BASE_URL
-        value: https://dental-crm01.vercel.app
+        sync: false
       - key: DENTAL_CRM_API_KEY
-        value: dental_crm_api_secret_key_2026
+        sync: false
       - key: DENTAL_CRM_ENABLED
         value: "true"
       - key: DENTAL_CRM_TIMEOUT_SECONDS
