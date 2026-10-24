@@ -20,6 +20,30 @@ async def vapi_webhook(request: Request, clinic_id: Optional[str] = Query(None))
 
     print(f"\n📞 [Vapi Webhook] Tenant: {clinic_id} | Message: {message_type}")
 
+    # Direct API Tool Call Support (when Vapi apiRequest tool sends raw JSON body directly)
+    if not message and ("patient_name" in body or "appointment_date" in body):
+        patient_name = body.get("patient_name", "Patient")
+        patient_phone = body.get("patient_phone", "Not Provided")
+        app_date = body.get("appointment_date", "tomorrow")
+        app_time = body.get("appointment_time", "11:15 AM")
+        treatment = body.get("treatment_type", "General Consultation")
+        notes = body.get("notes", "")
+
+        booking_result = dental_service.book_appointment(
+            clinic_id=clinic_id,
+            patient_name=patient_name,
+            patient_phone=patient_phone,
+            appointment_date=app_date,
+            appointment_time=app_time,
+            treatment_type=treatment,
+            notes=notes
+        )
+        return {
+            "success": True,
+            "message": f"Appointment confirmed for {patient_name} on {app_date} at {app_time}.",
+            "appointment": booking_result
+        }
+
     if message_type in ("tool-calls", "function-call"):
         tool_calls = message.get("toolCalls") or []
         if not tool_calls and "functionCall" in message:
